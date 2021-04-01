@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -35,6 +36,8 @@ namespace Microsoft.EntityFrameworkCore.Migrations
     /// </summary>
     public class SqlServerMigrationsSqlGenerator : MigrationsSqlGenerator
     {
+        private const string DefaultSchema = "dbo";
+
         private IReadOnlyList<MigrationOperation> _operations = null!;
         private int _variableCounter;
 
@@ -65,7 +68,7 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             _operations = operations;
             try
             {
-                return base.Generate(operations, model, options);
+                return base.Generate(RewriteOperations(operations, model), model, options);
             }
             finally
             {
@@ -544,7 +547,50 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 throw new ArgumentException(SqlServerStrings.CannotProduceUnterminatedSQLWithComments(nameof(CreateTableOperation)));
             }
 
-            base.Generate(operation, model, builder, terminate: false);
+            if (operation[SqlServerAnnotationNames.IsTemporal] as bool? == true)
+            {
+                var schema = operation.Schema ?? model!.GetDefaultSchema();
+                if (schema == null)
+                {
+                    // need to run command using EXEC to inject default schema
+                    builder.AppendLine("DECLARE @historyTableSchema sysname = SCHEMA_NAME()");
+                    builder.Append("EXEC(N'");
+                }
+
+                builder
+                    .Append("CREATE TABLE ")
+                    .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+                    .AppendLine(" (");
+
+                using (builder.Indent())
+                {
+                    CreateTableColumns(operation, model, builder);
+                    CreateTableConstraints(operation, model, builder);
+                    builder.AppendLine(",");
+                    var startColumnName = operation[SqlServerAnnotationNames.TemporalPeriodStartColumnName] as string;
+                    var endColumnName = operation[SqlServerAnnotationNames.TemporalPeriodEndColumnName] as string;
+                    var start = Dependencies.SqlGenerationHelper.DelimitIdentifier(startColumnName!);
+                    var end = Dependencies.SqlGenerationHelper.DelimitIdentifier(endColumnName!);
+                    builder.AppendLine($"PERIOD FOR SYSTEM_TIME({start}, {end})");
+                }
+
+                var historyTableName = operation[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                var historyTable = default(string);
+                if (schema != null)
+                {
+                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName!, schema);
+                    builder.Append($") WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = {historyTable}))");
+                }
+                else
+                {
+                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName!);
+                    builder.Append($") WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [' + @historyTableSchema + '].{historyTable}))')");
+                }
+            }
+            else
+            {
+                base.Generate(operation, model, builder, terminate: false);
+            }
 
             var memoryOptimized = IsMemoryOptimized(operation);
             if (memoryOptimized)
@@ -637,7 +683,6 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             bool terminate = true)
         {
             base.Generate(operation, model, builder, terminate: false);
-
             if (terminate)
             {
                 builder
@@ -737,7 +782,6 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             bool terminate = true)
         {
             base.Generate(operation, model, builder, terminate: false);
-
             if (terminate)
             {
                 builder
@@ -1471,6 +1515,21 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 builder.Append(" SPARSE");
             }
 
+            if (operation[SqlServerAnnotationNames.IsTemporalPeriodStartColumn] != null
+                || operation[SqlServerAnnotationNames.IsTemporalPeriodEndColumn] != null)
+            {
+                builder.Append(" GENERATED ALWAYS AS ROW ");
+
+                if (operation[SqlServerAnnotationNames.IsTemporalPeriodStartColumn] != null)
+                {
+                    builder.Append("START");
+                }
+                else
+                {
+                    builder.Append("END");
+                }
+            }
+
             builder.Append(operation.IsNullable ? " NULL" : " NOT NULL");
 
             DefaultValue(operation.DefaultValue, operation.DefaultValueSql, columnType, builder);
@@ -2090,6 +2149,383 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             }
 
             return count != targetAnnotations.Count;
+        }
+
+        private IReadOnlyList<MigrationOperation> RewriteOperations(
+            IReadOnlyList<MigrationOperation> migrationOperations,
+            IModel? model)
+        {
+            var operations = new List<MigrationOperation>();
+
+            var versioningMap = new Dictionary<(string?, string?), string>();
+            var periodMap = new Dictionary<(string?, string?), (string, string)>();
+
+            foreach (var operation in migrationOperations)
+            {
+                var isTemporal = operation[SqlServerAnnotationNames.IsTemporal] as bool? == true;
+                if (isTemporal)
+                {
+                    (string? table, string? schema) = operation switch
+                    {
+                        DropTableOperation op => (op.Name, op.Schema),
+                        DropPrimaryKeyOperation op => (op.Table, op.Schema),
+                        RenameTableOperation op => (op.Name, op.Schema),
+                        AddPrimaryKeyOperation op => (op.Table, op.Schema),
+                        AlterTableOperation op => (op.Name, op.Schema),
+                        DropColumnOperation op => (op.Table, op.Schema),
+                        RenameColumnOperation op => (op.Table, op.Schema),
+                        AlterColumnOperation op => (op.Table, op.Schema),
+                        AddColumnOperation op => (op.Table, op.Schema),
+                        CreateTableOperation op => (op.Name, op.Schema),
+                        _ => (null, null),
+                    };
+
+                    schema = schema ?? model?[RelationalAnnotationNames.DefaultSchema] as string;
+
+                    var historyTableName = operation[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                    if (operation is not CreateTableOperation
+                        && operation is not AlterTableOperation
+                        && operation is not AlterColumnOperation
+                        && operation is not AddColumnOperation
+                        && historyTableName == null)
+                    {
+                        // when we create temporal table or when we convert non-temporal to temporal (AlterTable or AlterColumn for that table)
+                        // history table could be null, for every other operation it should be known
+                        throw new InvalidOperationException("DEBUG: history table shouldn't be null");
+                    }
+
+                    var periodStartColumnName = operation[SqlServerAnnotationNames.TemporalPeriodStartColumnName] as string;
+                    var periodEndColumnName = operation[SqlServerAnnotationNames.TemporalPeriodEndColumnName] as string;
+
+                    if (operation is not AlterColumnOperation
+                        && operation is not DropColumnOperation
+                        && operation is not AddColumnOperation
+                        && (periodStartColumnName == null || periodEndColumnName == null))
+                    {
+                        throw new InvalidOperationException("DEBUG: Start/End column names should not be null");
+                    }
+
+                    switch (operation)
+                    {
+                        case DropTableOperation dropTableOperation:
+                            DisableVersioning(table!, schema, historyTableName!);
+                            operations.Add(operation);
+                            operations.Add(new DropTableOperation
+                            {
+                                Name = historyTableName!,
+                                Schema = dropTableOperation.Schema,
+                            });
+
+                            versioningMap.Remove((table, schema));
+                            periodMap.Remove((table, schema));
+                            break;
+
+                        case RenameTableOperation renameTableOperation:
+                            DisableVersioning(table!, schema, historyTableName!);
+                            operations.Add(operation);
+
+                            // since table was renamed, remove old entry and add new entry
+                            // marked as versioning disabled, so we enable it in the end for the new table
+                            versioningMap.Remove((table, schema));
+                            versioningMap[(renameTableOperation.NewName, renameTableOperation.NewSchema)] = historyTableName!;
+
+                            // same thing for disabled system period - remove one associated with old table and add one for the new table
+                            if (periodMap.TryGetValue((table, schema), out var result))
+                            {
+                                periodMap.Remove((table, schema));
+                                periodMap[(renameTableOperation.NewName, renameTableOperation.NewSchema)] = result;
+                            }
+
+                            break;
+
+                        case AlterTableOperation alterTableOperation:
+                            var oldIsTemporal = alterTableOperation.OldTable[SqlServerAnnotationNames.IsTemporal] as bool? == true;
+                            var oldHistoryTableName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                            if (!oldIsTemporal)
+                            {
+                                periodMap[(alterTableOperation.Name, alterTableOperation.Schema)] = (periodStartColumnName!, periodEndColumnName!);
+                                versioningMap[(alterTableOperation.Name, alterTableOperation.Schema)] = historyTableName!;
+                            }
+
+                            operations.Add(operation);
+                            break;
+
+                        case AlterColumnOperation alterColumnOperation:
+                            // if only difference is temporal annotations being removed - we can ignore this operation
+                            if (alterColumnOperation.OldColumn[SqlServerAnnotationNames.IsTemporal] as bool? == true
+                                || !ColumnOperationsOnlyDifferByTemporalTableAnnotation(alterColumnOperation, alterColumnOperation.OldColumn))
+                            {
+                                operations.Add(operation);
+                            }
+                            break;
+
+                        case DropPrimaryKeyOperation:
+                        case AddPrimaryKeyOperation:
+                            DisableVersioning(table!, schema, historyTableName!);
+                            operations.Add(operation);
+                            break;
+
+                        case DropColumnOperation dropColumnOperation:
+                            DisableVersioning(table!, schema, historyTableName!);
+                            if (dropColumnOperation[SqlServerAnnotationNames.IsTemporalPeriodStartColumn] as bool? == true
+                                || dropColumnOperation[SqlServerAnnotationNames.IsTemporalPeriodEndColumn] as bool? == true)
+                            {
+                                // period columns can be null here - it doesn't really matter since we are never enabling the period back
+                                // if we remove the period columns, it means we will be dropping the table also or at least convert it back to regular
+                                // which will clear the entry in the periodMap for this table
+                                DisablePeriod(table!, schema, periodStartColumnName!, periodEndColumnName!);
+                                operations.Add(operation);
+                            }
+                            else
+                            {
+                                // somewhat of a hack - when dropping column, we only need to drop the column from history table as well
+                                // if that column is not part of the period
+                                // for columns that are part of the period - if we are removing them from the temporal table, it means
+                                // that we are converting back to a regular table, and the history table will be removed anyway
+                                // so we don't need to keep it in sync
+                                // (and we can't simply remove the period column from history table to keep them in sync
+                                // because there is index on history table - we need to remove it first but we don't know its name)
+                                // question - can we easily remove index from the table if we don't know its name?
+                                operations.Add(operation);
+
+                                operations.Add(new DropColumnOperation
+                                {
+                                    Name = dropColumnOperation.Name,
+                                    // TODO: compiler is too dumb to figure out that this can't be null here :(
+                                    Table = historyTableName!,
+                                    Schema = dropColumnOperation.Schema
+                                });
+                            }
+
+                            break;
+
+                        case AddColumnOperation addColumnOperation:
+                            // when adding period column, we need to add it as a normal column first, and only later enable period
+                            // removing the period information now, so that when we generate SQL that adds the column we won't be making them auto generated as period
+                            // it won't work, unless period is enabled
+                            // but we can't enable period without adding the columns first - chicken and egg
+                            if (addColumnOperation[SqlServerAnnotationNames.IsTemporalPeriodStartColumn] as bool? == true)
+                            {
+                                addColumnOperation.RemoveAnnotation(SqlServerAnnotationNames.IsTemporalPeriodStartColumn);
+                            }
+                            else if (addColumnOperation[SqlServerAnnotationNames.IsTemporalPeriodEndColumn] as bool? == true)
+                            {
+                                addColumnOperation.RemoveAnnotation(SqlServerAnnotationNames.IsTemporalPeriodEndColumn);
+                                if (addColumnOperation.DefaultValueSql == null)
+                                {
+                                    addColumnOperation.DefaultValue = DateTime.MaxValue;
+                                }
+                            }
+
+                            operations.Add(addColumnOperation);
+                            break;
+
+                        default:
+                            // e.g. RenameColumnOperation
+                            operations.Add(operation);
+                            break;
+                    }
+                }
+                else
+                {
+                    if (operation is AlterTableOperation alterTableOperation
+                        && alterTableOperation.OldTable[SqlServerAnnotationNames.IsTemporal] as bool? == true)
+                    {
+                        var historyTableName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                        var periodStartColumnName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalPeriodStartColumnName] as string;
+                        var periodEndColumnName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalPeriodEndColumnName] as string;
+
+                        DisableVersioning(alterTableOperation.Name, alterTableOperation.Schema, historyTableName!);
+                        DisablePeriod(alterTableOperation.Name, alterTableOperation.Schema, periodStartColumnName!, periodEndColumnName!);
+
+                        if (historyTableName != null)
+                        {
+                            operations.Add(
+                                new DropTableOperation
+                                {
+                                    Name = historyTableName,
+                                    Schema = alterTableOperation.OldTable.Schema
+                                });
+                        }
+
+                        operations.Add(operation);
+
+                        // when we disable versioning and period earlier, we marked it to be re-enabled
+                        // since table is no longer temporal we don't need to do that anymore
+                        versioningMap.Remove((alterTableOperation.Name, alterTableOperation.Schema));
+                        periodMap.Remove((alterTableOperation.Name, alterTableOperation.Schema));
+                    }
+                    else if (operation is AlterColumnOperation alterColumnOperation)
+                    {
+                        // if only difference is temporal annotations being removed - we can ignore this operation
+                        if (!ColumnOperationsOnlyDifferByTemporalTableAnnotation(alterColumnOperation.OldColumn, alterColumnOperation))
+                        {
+                            operations.Add(operation);
+                        }
+                    }
+                    else
+                    {
+                        operations.Add(operation);
+                    }
+                }
+            }
+
+            foreach (var periodMapEntry in periodMap)
+            {
+                EnablePeriod(periodMapEntry.Key.Item1!, periodMapEntry.Key.Item2, periodMapEntry.Value.Item1, periodMapEntry.Value.Item2);
+            }
+
+            foreach (var versioningMapEntry in versioningMap)
+            {
+                EnableVersioning(versioningMapEntry.Key.Item1!, versioningMapEntry.Key.Item2, versioningMapEntry.Value);
+            }
+
+            return operations;
+
+            void DisableVersioning(string table, string? schema, string historyTableName)
+            {
+                if (!versioningMap.TryGetValue((table, schema), out var result))
+                {
+                    versioningMap[(table, schema)] = historyTableName;
+
+                    operations.Add(
+                        new SqlOperation
+                        {
+                            Sql = new StringBuilder()
+                                .Append("ALTER TABLE ")
+                                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(table, schema))
+                                .AppendLine(" SET (SYSTEM_VERSIONING = OFF)")
+                                .ToString()
+                        });
+                }
+            }
+
+            void EnableVersioning(string table, string? schema, string historyTableName)
+            {
+                var stringBuilder = new StringBuilder();
+
+                if (schema == null)
+                {
+                    // need to run command using EXEC to inject default schema
+                    stringBuilder.AppendLine("DECLARE @historyTableSchema sysname = SCHEMA_NAME()");
+                    stringBuilder.Append("EXEC(N'");
+                }
+
+                var historyTable = default(string);
+                if (schema != null)
+                {
+                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName, schema);
+                }
+                else
+                {
+                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName);
+                }
+
+                stringBuilder
+                    .Append("ALTER TABLE ")
+                    .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(table, schema));
+
+                if (schema != null)
+                {
+                    stringBuilder.AppendLine($" SET (SYSTEM_VERSIONING = ON (HISTORY_TABLE = {historyTable}))");
+                }
+                else
+                {
+                    stringBuilder.AppendLine($" SET (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [' + @historyTableSchema + '].{historyTable}))')");
+                }
+
+                operations.Add(
+                    new SqlOperation
+                    {
+                        Sql = stringBuilder.ToString()
+                    });
+            }
+
+            void DisablePeriod(string table, string? schema, string periodStartColumnName, string periodEndColumnName)
+            {
+                if (!periodMap.TryGetValue((table, schema), out var result))
+                {
+                    periodMap[(table, schema)] = (periodStartColumnName, periodEndColumnName);
+
+                    operations.Add(
+                        new SqlOperation
+                        {
+                            Sql = new StringBuilder()
+                                .Append("ALTER TABLE ")
+                                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(table, schema ?? DefaultSchema))
+                                .AppendLine(" DROP PERIOD FOR SYSTEM_TIME")
+                                .ToString()
+                        });
+                }
+            }
+
+            void EnablePeriod(string table, string? schema, string periodStartColumnName, string periodEndColumnName)
+            {
+                operations.Add(
+                    new SqlOperation
+                    {
+                        Sql = new StringBuilder()
+                            .Append("ALTER TABLE ")
+                            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(table, schema))
+                            .Append(" ADD PERIOD FOR SYSTEM_TIME (")
+                            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(periodStartColumnName))
+                            .Append(", ")
+                            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(periodEndColumnName))
+                            .Append(")")
+                            .ToString()
+                    });
+            }
+
+            static bool ColumnOperationsOnlyDifferByTemporalTableAnnotation(ColumnOperation maybeWith, ColumnOperation maybeWithout)
+            {
+                if (maybeWith.ClrType == maybeWithout.ClrType
+                    && maybeWith.Collation == maybeWithout.Collation
+                    && maybeWith.ColumnType == maybeWithout.ColumnType
+                    && maybeWith.Comment == maybeWithout.Comment
+                    && maybeWith.ComputedColumnSql == maybeWithout.ComputedColumnSql
+                    && Equals(maybeWith.DefaultValue, maybeWithout.DefaultValue)
+                    && maybeWith.DefaultValueSql == maybeWithout.DefaultValueSql
+                    && maybeWith.IsDestructiveChange == maybeWithout.IsDestructiveChange
+                    && maybeWith.IsFixedLength == maybeWithout.IsFixedLength
+                    && maybeWith.IsNullable == maybeWithout.IsNullable
+                    && maybeWith.IsReadOnly == maybeWithout.IsReadOnly
+                    && maybeWith.IsRowVersion == maybeWithout.IsRowVersion
+                    && maybeWith.IsStored == maybeWithout.IsStored
+                    && maybeWith.IsUnicode == maybeWithout.IsUnicode
+                    && maybeWith.MaxLength == maybeWithout.MaxLength
+                    && maybeWith.Name == maybeWithout.Name
+                    && maybeWith.Precision == maybeWithout.Precision
+                    && maybeWith.Scale == maybeWithout.Scale
+                    && maybeWith.Schema == maybeWithout.Schema
+                    && maybeWith.Table == maybeWithout.Table)
+                {
+                    var unmatched = maybeWith.GetAnnotations().ToList();
+                    var annotationsAdded = false;
+
+                    foreach (var annotation in maybeWithout.GetAnnotations())
+                    {
+                        var index = unmatched.FindIndex(
+                            a => a.Name == annotation.Name && StructuralComparisons.StructuralEqualityComparer.Equals(a.Value, annotation.Value));
+                        if (index == -1)
+                        {
+                            annotationsAdded = true;
+                            break;
+                        }
+
+                        unmatched.RemoveAt(index);
+                    }
+
+                    if (!annotationsAdded
+                        && unmatched.All(a => a.Name == SqlServerAnnotationNames.IsTemporal
+                            || a.Name == SqlServerAnnotationNames.IsTemporalPeriodStartColumn
+                            || a.Name == SqlServerAnnotationNames.IsTemporalPeriodEndColumn))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
         }
     }
 }

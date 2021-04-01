@@ -59,6 +59,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal
             ValidateDecimalColumns(model, logger);
             ValidateByteIdentityMapping(model, logger);
             ValidateNonKeyValueGeneration(model, logger);
+            ValidateTemporal(model, logger);
         }
 
         /// <summary>
@@ -215,6 +216,81 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal
         ///     any release. You should only use it directly in your code with extreme caution and knowing that
         ///     doing so can result in application failures when updating to a new Entity Framework Core release.
         /// </summary>
+        protected virtual void ValidateTemporal(
+            IModel model,
+            IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+        {
+            foreach (var temporalEntityType in model.GetEntityTypes().Where(t => t.IsTemporal()))
+            {
+                // TODO: fix these messages - add resources and improve messages themselves - add entity type name etc.
+                if (temporalEntityType.BaseType != null)
+                {
+                    throw new InvalidOperationException("Only root entity type should be marked as temporal.");
+                }
+
+                var periodStartPropertyName = temporalEntityType.TemporalPeriodStartPropertyName();
+                if (periodStartPropertyName == null)
+                {
+                    throw new InvalidOperationException("Temporal entity must have period start property name set.");
+                }
+
+                var periodStartProperty = temporalEntityType.FindProperty(periodStartPropertyName);
+                if (periodStartProperty == null)
+                {
+                    throw new InvalidOperationException($"Temporal entity must have period start property: '{periodStartPropertyName}'.");
+                }
+
+                if (periodStartProperty.IsNullable
+                    || periodStartProperty.ClrType != typeof(DateTime))
+                {
+                    throw new InvalidOperationException($"Period start property: '{periodStartPropertyName}' must be non-nullable and of type 'DateTime'.");
+                }
+
+                if (periodStartProperty.GetColumnType() != "datetime2")
+                {
+                    throw new InvalidOperationException("Column to which period start property is mapped must be of type 'datetime2'.");
+                }
+
+                var periodEndPropertyName = temporalEntityType.TemporalPeriodEndPropertyName();
+                if (periodEndPropertyName == null)
+                {
+                    throw new InvalidOperationException("Temporal entity must have period end property name set.");
+                }
+
+                var periodEndProperty = temporalEntityType.FindProperty(periodEndPropertyName);
+                if (periodEndProperty == null)
+                {
+                    throw new InvalidOperationException($"Temporal entity must have period end property: '{periodEndPropertyName}'.");
+                }
+
+                if (periodEndProperty.IsNullable
+                    || periodEndProperty.ClrType != typeof(DateTime))
+                {
+                    throw new InvalidOperationException($"Period end property: '{periodEndPropertyName}' must be non-nullable and of type 'DateTime'.");
+                }
+
+                if (periodEndProperty.GetColumnType() != "datetime2")
+                {
+                    throw new InvalidOperationException("Column to which period end property is mapped must be of type 'datetime2'.");
+                }
+
+                if (temporalEntityType.GetDerivedTypes().Any())
+                {
+                    var tableMappings = temporalEntityType.GetDerivedTypes().Select(t => t.GetTableName()).Distinct();
+                    if (tableMappings.Count() != 1 || tableMappings.First() != temporalEntityType.GetTableName())
+                    {
+                        throw new InvalidOperationException("Temporal tables are only supported for entities using Table-Per-Hierarchy inheritance mapping.");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+        ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+        ///     any release. You should only use it directly in your code with extreme caution and knowing that
+        ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+        /// </summary>
         protected override void ValidateSharedTableCompatibility(
             IReadOnlyList<IEntityType> mappedTypes,
             string tableName,
@@ -223,7 +299,6 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal
         {
             var firstMappedType = mappedTypes[0];
             var isMemoryOptimized = firstMappedType.IsMemoryOptimized();
-
             foreach (var otherMappedType in mappedTypes.Skip(1))
             {
                 if (isMemoryOptimized != otherMappedType.IsMemoryOptimized())

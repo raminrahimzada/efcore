@@ -1765,6 +1765,46 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 });
         }
 
+        [ConditionalFact]
+        public virtual void Temporal_table_information_is_stored_in_snapshot()
+        {
+            Test(
+                builder => builder.Entity<EntityWithStringProperty>().IsTemporal("Start", "End", "HistoryTable"),
+                AddBoilerPlate(
+                    GetHeading()
+                    + @"
+            modelBuilder.Entity(""Microsoft.EntityFrameworkCore.Migrations.ModelSnapshotSqlServerTest+EntityWithStringProperty"", b =>
+                {
+                    b.Property<int>(""Id"")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType(""int"")
+                        .HasAnnotation(""SqlServer:ValueGenerationStrategy"", SqlServerValueGenerationStrategy.IdentityColumn);
+
+                    b.Property<DateTime>(""End"")
+                        .HasColumnType(""datetime2"");
+
+                    b.Property<string>(""Name"")
+                        .HasColumnType(""nvarchar(max)"");
+
+                    b.Property<DateTime>(""Start"")
+                        .HasColumnType(""datetime2"");
+
+                    b.HasKey(""Id"");
+
+                    b.ToTable(""EntityWithStringProperty"");
+
+                    b
+                        .IsTemporal(""Start"", ""End"", ""HistoryTable"")
+                        .HasAnnotation(""SqlServer:TemporalPeriodEndColumnName"", ""End"")
+                        .HasAnnotation(""SqlServer:TemporalPeriodStartColumnName"", ""Start"");
+                });", usingSystem: true),
+                o =>
+                {
+                    var temporalEntity = o.FindEntityType("Microsoft.EntityFrameworkCore.Migrations.ModelSnapshotSqlServerTest+EntityWithStringProperty");
+                    Assert.Equal(8, temporalEntity.GetAnnotations().Count());
+                });
+        }
+
         #endregion
 
         #region Owned types
