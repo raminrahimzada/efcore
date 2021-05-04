@@ -91,26 +91,27 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Design.Internal
         {
             var result = base.GenerateFluentApiCalls(entityType, annotations);
 
-            if (annotations.TryGetValue(SqlServerAnnotationNames.IsTemporal, out var isTemporalAnnotation)
-                && isTemporalAnnotation.Value as bool? == true)
-            {
-                var periodStartPropertyName = annotations[SqlServerAnnotationNames.TemporalPeriodStartPropertyName].Value as string;
-                var periodEndPropertyName = annotations[SqlServerAnnotationNames.TemporalPeriodEndPropertyName].Value as string;
-                var historyTableName = annotations[SqlServerAnnotationNames.TemporalHistoryTableName].Value as string;
+            // TODO: fix this once the API is approved
+            //if (annotations.TryGetValue(SqlServerAnnotationNames.IsTemporal, out var isTemporalAnnotation)
+            //    && isTemporalAnnotation.Value as bool? == true)
+            //{
+            //    var periodStartPropertyName = annotations[SqlServerAnnotationNames.TemporalPeriodStartPropertyName].Value as string;
+            //    var periodEndPropertyName = annotations[SqlServerAnnotationNames.TemporalPeriodEndPropertyName].Value as string;
+            //    var historyTableName = annotations[SqlServerAnnotationNames.TemporalHistoryTableName].Value as string;
 
-                var isTemporalCall = new MethodCallCodeFragment(
-                    nameof(SqlServerEntityTypeBuilderExtensions.IsTemporal),
-                    periodStartPropertyName,
-                    periodEndPropertyName,
-                    historyTableName);
+            //    var isTemporalCall = new MethodCallCodeFragment(
+            //        nameof(SqlServerEntityTypeBuilderExtensions.IsTemporal),
+            //        periodStartPropertyName,
+            //        periodEndPropertyName,
+            //        historyTableName);
 
-                annotations.Remove(SqlServerAnnotationNames.IsTemporal);
-                annotations.Remove(SqlServerAnnotationNames.TemporalPeriodStartPropertyName);
-                annotations.Remove(SqlServerAnnotationNames.TemporalPeriodEndPropertyName);
-                annotations.Remove(SqlServerAnnotationNames.TemporalHistoryTableName);
+            //    annotations.Remove(SqlServerAnnotationNames.IsTemporal);
+            //    annotations.Remove(SqlServerAnnotationNames.TemporalPeriodStartPropertyName);
+            //    annotations.Remove(SqlServerAnnotationNames.TemporalPeriodEndPropertyName);
+            //    annotations.Remove(SqlServerAnnotationNames.TemporalHistoryTableName);
 
-                return result.Concat(new[] { isTemporalCall }).ToList();
-            }
+            //    return result.Concat(new[] { isTemporalCall }).ToList();
+            //}
 
             return result;
         }

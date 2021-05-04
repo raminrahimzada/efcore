@@ -33,6 +33,21 @@ namespace Microsoft.EntityFrameworkCore
         ///     Configures the table that the entity type maps to when targeting a relational database.
         /// </summary>
         /// <param name="entityTypeBuilder"> The builder for the entity type being configured. </param>
+        /// <param name="buildAction"> An action that performs configuration of the table. </param>
+        /// <returns> The same builder instance so that multiple calls can be chained. </returns>
+        public static EntityTypeBuilder ToTable(
+            this EntityTypeBuilder entityTypeBuilder,
+            Action<TableBuilder> buildAction)
+        {
+            buildAction(new TableBuilder(null, null, entityTypeBuilder.Metadata));
+
+            return entityTypeBuilder;
+        }
+
+        /// <summary>
+        ///     Configures the table that the entity type maps to when targeting a relational database.
+        /// </summary>
+        /// <param name="entityTypeBuilder"> The builder for the entity type being configured. </param>
         /// <param name="name"> The name of the table. </param>
         /// <param name="buildAction"> An action that performs configuration of the table. </param>
         /// <returns> The same builder instance so that multiple calls can be chained. </returns>
@@ -54,6 +69,23 @@ namespace Microsoft.EntityFrameworkCore
             string? name)
             where TEntity : class
             => entityTypeBuilder.ToTable(name, (string?)null);
+
+        /// <summary>
+        ///     Configures the table that the entity type maps to when targeting a relational database.
+        /// </summary>
+        /// <typeparam name="TEntity"> The entity type being configured. </typeparam>
+        /// <param name="entityTypeBuilder"> The builder for the entity type being configured. </param>
+        /// <param name="buildAction"> An action that performs configuration of the table. </param>
+        /// <returns> The same builder instance so that multiple calls can be chained. </returns>
+        public static EntityTypeBuilder<TEntity> ToTable<TEntity>(
+            this EntityTypeBuilder<TEntity> entityTypeBuilder,
+            Action<TableBuilder> buildAction)
+            where TEntity : class
+        {
+            buildAction(new TableBuilder<TEntity>(null, null, entityTypeBuilder.Metadata));
+
+            return entityTypeBuilder;
+        }
 
         /// <summary>
         ///     Configures the table that the entity type maps to when targeting a relational database.

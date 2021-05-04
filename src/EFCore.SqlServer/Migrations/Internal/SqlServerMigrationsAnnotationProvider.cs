@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.SqlServer.Metadata.Internal;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,6 +64,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Migrations.Internal
                 yield return new Annotation(
                     SqlServerAnnotationNames.TemporalHistoryTableName,
                     constraint.Table[SqlServerAnnotationNames.TemporalHistoryTableName]);
+
+                yield return new Annotation(
+                    SqlServerAnnotationNames.TemporalHistoryTableSchema,
+                    constraint.Table[SqlServerAnnotationNames.TemporalHistoryTableSchema]);
             }
         }
 
@@ -86,6 +91,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Migrations.Internal
                 yield return new Annotation(
                     SqlServerAnnotationNames.TemporalHistoryTableName,
                     column.Table[SqlServerAnnotationNames.TemporalHistoryTableName]);
+
+                yield return new Annotation(
+                    SqlServerAnnotationNames.TemporalHistoryTableSchema,
+                    column.Table[SqlServerAnnotationNames.TemporalHistoryTableSchema]);
             }
         }
     }

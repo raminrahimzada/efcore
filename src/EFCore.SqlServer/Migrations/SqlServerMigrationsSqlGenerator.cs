@@ -549,8 +549,11 @@ namespace Microsoft.EntityFrameworkCore.Migrations
 
             if (operation[SqlServerAnnotationNames.IsTemporal] as bool? == true)
             {
-                var schema = operation.Schema ?? model!.GetDefaultSchema();
-                if (schema == null)
+                var historyTableSchema = operation[SqlServerAnnotationNames.TemporalHistoryTableSchema] as string
+                    ?? operation.Schema
+                    ?? model!.GetDefaultSchema();
+
+                if (historyTableSchema == null)
                 {
                     // need to run command using EXEC to inject default schema
                     builder.AppendLine("DECLARE @historyTableSchema sysname = SCHEMA_NAME()");
@@ -576,9 +579,9 @@ namespace Microsoft.EntityFrameworkCore.Migrations
 
                 var historyTableName = operation[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
                 var historyTable = default(string);
-                if (schema != null)
+                if (historyTableSchema != null)
                 {
-                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName!, schema);
+                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName!, historyTableSchema);
                     builder.Append($") WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = {historyTable}))");
                 }
                 else
@@ -2157,7 +2160,7 @@ namespace Microsoft.EntityFrameworkCore.Migrations
         {
             var operations = new List<MigrationOperation>();
 
-            var versioningMap = new Dictionary<(string?, string?), string>();
+            var versioningMap = new Dictionary<(string?, string?), (string, string?)>();
             var periodMap = new Dictionary<(string?, string?), (string, string)>();
 
             foreach (var operation in migrationOperations)
@@ -2183,6 +2186,7 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                     schema = schema ?? model?[RelationalAnnotationNames.DefaultSchema] as string;
 
                     var historyTableName = operation[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                    var historyTableSchema = operation[SqlServerAnnotationNames.TemporalHistoryTableSchema] as string ?? schema;
                     if (operation is not CreateTableOperation
                         && operation is not AlterTableOperation
                         && operation is not AlterColumnOperation
@@ -2207,13 +2211,21 @@ namespace Microsoft.EntityFrameworkCore.Migrations
 
                     switch (operation)
                     {
+                        case CreateTableOperation createTableOperation:
+                            if (historyTableSchema != schema && historyTableSchema != null)
+                            {
+                                operations.Add(new EnsureSchemaOperation { Name = historyTableSchema });
+                            }
+
+                            operations.Add(operation);
+                            break;
                         case DropTableOperation dropTableOperation:
-                            DisableVersioning(table!, schema, historyTableName!);
+                            DisableVersioning(table!, schema, historyTableName!, historyTableSchema);
                             operations.Add(operation);
                             operations.Add(new DropTableOperation
                             {
                                 Name = historyTableName!,
-                                Schema = dropTableOperation.Schema,
+                                Schema = historyTableSchema,
                             });
 
                             versioningMap.Remove((table, schema));
@@ -2221,13 +2233,13 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                             break;
 
                         case RenameTableOperation renameTableOperation:
-                            DisableVersioning(table!, schema, historyTableName!);
+                            DisableVersioning(table!, schema, historyTableName!, historyTableSchema);
                             operations.Add(operation);
 
                             // since table was renamed, remove old entry and add new entry
                             // marked as versioning disabled, so we enable it in the end for the new table
                             versioningMap.Remove((table, schema));
-                            versioningMap[(renameTableOperation.NewName, renameTableOperation.NewSchema)] = historyTableName!;
+                            versioningMap[(renameTableOperation.NewName, renameTableOperation.NewSchema)] = (historyTableName!, historyTableSchema);
 
                             // same thing for disabled system period - remove one associated with old table and add one for the new table
                             if (periodMap.TryGetValue((table, schema), out var result))
@@ -2240,11 +2252,39 @@ namespace Microsoft.EntityFrameworkCore.Migrations
 
                         case AlterTableOperation alterTableOperation:
                             var oldIsTemporal = alterTableOperation.OldTable[SqlServerAnnotationNames.IsTemporal] as bool? == true;
-                            var oldHistoryTableName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
                             if (!oldIsTemporal)
                             {
                                 periodMap[(alterTableOperation.Name, alterTableOperation.Schema)] = (periodStartColumnName!, periodEndColumnName!);
-                                versioningMap[(alterTableOperation.Name, alterTableOperation.Schema)] = historyTableName!;
+                                versioningMap[(alterTableOperation.Name, alterTableOperation.Schema)] = (historyTableName!, historyTableSchema);
+                            }
+                            else
+                            {
+                                var oldHistoryTableName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                                var oldHistoryTableSchema = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableSchema] as string
+                                    ?? alterTableOperation.OldTable.Schema
+                                    ?? model?[RelationalAnnotationNames.DefaultSchema] as string;
+
+                                if (oldHistoryTableName != historyTableSchema
+                                    || oldHistoryTableSchema != historyTableSchema)
+                                {
+                                    if (historyTableSchema != null)
+                                    {
+                                        operations.Add(new EnsureSchemaOperation { Name = historyTableSchema });
+                                    }
+
+                                    operations.Add(new RenameTableOperation
+                                    {
+                                        Name = oldHistoryTableName!,
+                                        Schema = oldHistoryTableSchema,
+                                        NewName = historyTableName,
+                                        NewSchema = historyTableSchema
+                                    });
+
+                                    if (versioningMap.ContainsKey((alterTableOperation.Name, alterTableOperation.Schema)))
+                                    {
+                                        versioningMap[(alterTableOperation.Name, alterTableOperation.Schema)] = (historyTableName!, historyTableSchema);
+                                    }
+                                }
                             }
 
                             operations.Add(operation);
@@ -2261,12 +2301,12 @@ namespace Microsoft.EntityFrameworkCore.Migrations
 
                         case DropPrimaryKeyOperation:
                         case AddPrimaryKeyOperation:
-                            DisableVersioning(table!, schema, historyTableName!);
+                            DisableVersioning(table!, schema, historyTableName!, historyTableSchema);
                             operations.Add(operation);
                             break;
 
                         case DropColumnOperation dropColumnOperation:
-                            DisableVersioning(table!, schema, historyTableName!);
+                            DisableVersioning(table!, schema, historyTableName!, historyTableSchema);
                             if (dropColumnOperation[SqlServerAnnotationNames.IsTemporalPeriodStartColumn] as bool? == true
                                 || dropColumnOperation[SqlServerAnnotationNames.IsTemporalPeriodEndColumn] as bool? == true)
                             {
@@ -2332,10 +2372,14 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                         && alterTableOperation.OldTable[SqlServerAnnotationNames.IsTemporal] as bool? == true)
                     {
                         var historyTableName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableName] as string;
+                        var historyTableSchema = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalHistoryTableSchema] as string
+                            ?? alterTableOperation.OldTable.Schema
+                            ?? model?[RelationalAnnotationNames.DefaultSchema] as string;
+
                         var periodStartColumnName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalPeriodStartColumnName] as string;
                         var periodEndColumnName = alterTableOperation.OldTable[SqlServerAnnotationNames.TemporalPeriodEndColumnName] as string;
 
-                        DisableVersioning(alterTableOperation.Name, alterTableOperation.Schema, historyTableName!);
+                        DisableVersioning(alterTableOperation.Name, alterTableOperation.Schema, historyTableName!, historyTableSchema);
                         DisablePeriod(alterTableOperation.Name, alterTableOperation.Schema, periodStartColumnName!, periodEndColumnName!);
 
                         if (historyTableName != null)
@@ -2377,16 +2421,16 @@ namespace Microsoft.EntityFrameworkCore.Migrations
 
             foreach (var versioningMapEntry in versioningMap)
             {
-                EnableVersioning(versioningMapEntry.Key.Item1!, versioningMapEntry.Key.Item2, versioningMapEntry.Value);
+                EnableVersioning(versioningMapEntry.Key.Item1!, versioningMapEntry.Key.Item2, versioningMapEntry.Value.Item1, versioningMapEntry.Value.Item2);
             }
 
             return operations;
 
-            void DisableVersioning(string table, string? schema, string historyTableName)
+            void DisableVersioning(string table, string? schema, string historyTableName, string? historyTableSchema)
             {
                 if (!versioningMap.TryGetValue((table, schema), out var result))
                 {
-                    versioningMap[(table, schema)] = historyTableName;
+                    versioningMap[(table, schema)] = (historyTableName, historyTableSchema);
 
                     operations.Add(
                         new SqlOperation
@@ -2400,11 +2444,11 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 }
             }
 
-            void EnableVersioning(string table, string? schema, string historyTableName)
+            void EnableVersioning(string table, string? schema, string historyTableName, string? historyTableSchema)
             {
                 var stringBuilder = new StringBuilder();
 
-                if (schema == null)
+                if (historyTableSchema == null)
                 {
                     // need to run command using EXEC to inject default schema
                     stringBuilder.AppendLine("DECLARE @historyTableSchema sysname = SCHEMA_NAME()");
@@ -2412,9 +2456,9 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 }
 
                 var historyTable = default(string);
-                if (schema != null)
+                if (historyTableSchema != null)
                 {
-                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName, schema);
+                    historyTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(historyTableName, historyTableSchema);
                 }
                 else
                 {
@@ -2425,7 +2469,7 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                     .Append("ALTER TABLE ")
                     .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(table, schema));
 
-                if (schema != null)
+                if (historyTableSchema != null)
                 {
                     stringBuilder.AppendLine($" SET (SYSTEM_VERSIONING = ON (HISTORY_TABLE = {historyTable}))");
                 }

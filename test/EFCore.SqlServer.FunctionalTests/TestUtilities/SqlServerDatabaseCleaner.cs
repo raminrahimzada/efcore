@@ -105,6 +105,9 @@ EXEC (@SQL);";
                 operation[SqlServerAnnotationNames.TemporalHistoryTableName]
                     = table[SqlServerAnnotationNames.TemporalHistoryTableName];
 
+                operation[SqlServerAnnotationNames.TemporalHistoryTableSchema]
+                    = table[SqlServerAnnotationNames.TemporalHistoryTableSchema];
+
                 operation[SqlServerAnnotationNames.TemporalPeriodStartColumnName]
                     = table[SqlServerAnnotationNames.TemporalPeriodStartColumnName];
 

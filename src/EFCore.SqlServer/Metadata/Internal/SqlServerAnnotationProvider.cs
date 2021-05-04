@@ -106,6 +106,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Metadata.Internal
                 yield return new Annotation(SqlServerAnnotationNames.TemporalPeriodStartColumnName, entityType.TemporalPeriodStartColumnName());
                 yield return new Annotation(SqlServerAnnotationNames.TemporalPeriodEndColumnName, entityType.TemporalPeriodEndColumnName());
                 yield return new Annotation(SqlServerAnnotationNames.TemporalHistoryTableName, entityType.TemporalHistoryTableName());
+                yield return new Annotation(SqlServerAnnotationNames.TemporalHistoryTableSchema, entityType.TemporalHistoryTableSchema());
             }
         }
 

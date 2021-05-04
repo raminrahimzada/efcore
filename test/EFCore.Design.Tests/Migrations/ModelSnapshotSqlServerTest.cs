@@ -1765,11 +1765,17 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 });
         }
 
-        [ConditionalFact]
+        // TODO: add once API is approved
+        [ConditionalFact(Skip = "add once API is approved")]
         public virtual void Temporal_table_information_is_stored_in_snapshot()
         {
             Test(
-                builder => builder.Entity<EntityWithStringProperty>().IsTemporal("Start", "End", "HistoryTable"),
+                builder => builder.Entity<EntityWithStringProperty>().ToTable(tb => tb.IsTemporal(ttb =>
+                {
+                    ttb.WithHistoryTable("HistoryTable");
+                    ttb.HasPeriodStart("Start");
+                    ttb.HasPeriodEnd("End");
+                })),
                 AddBoilerPlate(
                     GetHeading()
                     + @"

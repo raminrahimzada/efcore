@@ -497,6 +497,7 @@ SELECT
                 commandText += @",
     [t].[temporal_type],
     (SELECT [t2].[name] FROM [sys].[tables] AS t2 WHERE [t2].[object_id] = [t].[history_table_id]) AS [history_table_name],
+    (SELECT SCHEMA_NAME([t2].[schema_id]) FROM [sys].[tables] AS t2 WHERE [t2].[object_id] = [t].[history_table_id]) AS [history_table_schema],
 	(SELECT [c].[name] FROM [sys].[columns] as [c] WHERE [c].[object_id] = [t].[object_id] AND [c].[generated_always_type] = 1) as [period_start_column],
 	(SELECT [c].[name] FROM [sys].[columns] as [c] WHERE [c].[object_id] = [t].[object_id] AND [c].[generated_always_type] = 2) as [period_end_column]";
             }
@@ -554,6 +555,7 @@ SELECT
                 viewCommandText += @",
     1 AS [temporal_type],
     NULL AS [history_table_name],
+    NULL AS [history_table_schema],
     NULL AS [period_start_column],
     NULL AS [period_end_column]";
             }
@@ -613,6 +615,9 @@ WHERE "
 
                             var historyTableName = reader.GetValueOrDefault<string>("history_table_name");
                             table[SqlServerAnnotationNames.TemporalHistoryTableName] = historyTableName;
+
+                            var historyTableSchema = reader.GetValueOrDefault<string>("history_table_schema");
+                            table[SqlServerAnnotationNames.TemporalHistoryTableSchema] = historyTableSchema;
 
                             var periodStartColumnName = reader.GetValueOrDefault<string>("period_start_column");
                             table[SqlServerAnnotationNames.TemporalPeriodStartColumnName] = periodStartColumnName;

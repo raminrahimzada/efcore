@@ -1,8 +1,8 @@
-// Copyright (c) .NET Foundation. All rights reserved.
+﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using System;
 using System.ComponentModel;
-using System.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace Microsoft.EntityFrameworkCore.Metadata.Builders
@@ -13,8 +13,10 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Builders
     ///         and it is not designed to be directly constructed in your application code.
     ///     </para>
     /// </summary>
-    public class TableBuilder
+    public class TemporalTableBuilder
     {
+        private readonly IMutableEntityType _entityType;
+
         /// <summary>
         ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
         ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
@@ -22,26 +24,59 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Builders
         ///     doing so can result in application failures when updating to a new Entity Framework Core release.
         /// </summary>
         [EntityFrameworkInternal]
-        public TableBuilder(string? name, string? schema, IMutableEntityType entityType)
+        public TemporalTableBuilder(IMutableEntityType entityType)
         {
-            EntityType = entityType;
+            _entityType = entityType;
         }
 
         /// <summary>
-        ///     The entity type being configured.
+        ///     TODO: add comments
         /// </summary>
-        public virtual IMutableEntityType EntityType { [DebuggerStepThrough] get; }
-
-        /// <summary>
-        ///     Configures the table to be ignored by migrations.
-        /// </summary>
-        /// <param name="excluded"> A value indicating whether the table should be managed by migrations. </param>
-        /// <returns> The same builder instance so that multiple calls can be chained. </returns>
-        public virtual TableBuilder ExcludeFromMigrations(bool excluded = true)
+        public virtual TemporalTableBuilder WithHistoryTable(string? name = null, string? schema = null)
         {
-            EntityType.SetIsTableExcludedFromMigrations(excluded);
+            if (name != null)
+            {
+                _entityType.SetTemporalHistoryTableName(name);
+            }
+
+            if (schema != null)
+            {
+                _entityType.SetTemporalHistoryTableSchema(schema);
+            }
 
             return this;
+        }
+
+        /// <summary>
+        ///     TODO: add comments
+        /// </summary>
+        public virtual TemporalPeriodPropertyBuilder HasPeriodStart(string propertyName)
+        {
+            if (_entityType.FindProperty(propertyName) != null)
+            {
+                throw new InvalidOperationException($"Entity '{_entityType.ShortName()}' can't use the property '{propertyName}' as part of the period because property with this name already exists.");
+            }
+
+            var periodProperty = _entityType.AddProperty(propertyName, typeof(DateTime));
+            _entityType.SetTemporalPeriodStartPropertyName(propertyName);
+
+            return new TemporalPeriodPropertyBuilder(_entityType, periodProperty, periodStart: true);
+        }
+
+        /// <summary>
+        ///     TODO: add comments
+        /// </summary>
+        public virtual TemporalPeriodPropertyBuilder HasPeriodEnd(string propertyName)
+        {
+            if (_entityType.FindProperty(propertyName) != null)
+            {
+                throw new InvalidOperationException($"Entity '{_entityType.ShortName()}' can't use the property '{propertyName}' as part of the period because property with this name already exists.");
+            }
+
+            var periodProperty = _entityType.AddProperty(propertyName, typeof(DateTime));
+            _entityType.SetTemporalPeriodEndPropertyName(propertyName);
+
+            return new TemporalPeriodPropertyBuilder(_entityType, periodProperty, periodStart: false);
         }
 
         #region Hidden System.Object members

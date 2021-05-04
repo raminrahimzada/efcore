@@ -273,5 +273,41 @@ namespace Microsoft.EntityFrameworkCore
         /// <returns> The configuration source for the temporal history table name setting. </returns>
         public static ConfigurationSource? GetTemporalHistoryTableNameConfigurationSource(this IConventionEntityType entityType)
             => entityType.FindAnnotation(SqlServerAnnotationNames.TemporalHistoryTableName)?.GetConfigurationSource();
+
+        /// <summary>
+        /// TODO: add comments
+        /// </summary>
+        public static string? TemporalHistoryTableSchema(this IReadOnlyEntityType entityType)
+            => entityType[SqlServerAnnotationNames.TemporalHistoryTableSchema] as string;
+
+        /// <summary>
+        /// TODO: add comments
+        /// </summary>
+        public static void SetTemporalHistoryTableSchema(this IMutableEntityType entityType, string? historyTableSchema)
+            => entityType.SetAnnotation(SqlServerAnnotationNames.TemporalHistoryTableSchema, historyTableSchema);
+
+        /// <summary>
+        /// TODO: add comments
+        /// </summary>
+        public static string? SetTemporalHistoryTableSchema(
+            this IConventionEntityType entityType,
+            string? historyTableSchema,
+            bool fromDataAnnotation = false)
+        {
+            entityType.SetAnnotation(
+                SqlServerAnnotationNames.TemporalHistoryTableSchema,
+                historyTableSchema,
+                fromDataAnnotation);
+
+            return historyTableSchema;
+        }
+
+        /// <summary>
+        ///     Gets the configuration source for the temporal history table name setting.
+        /// </summary>
+        /// <param name="entityType"> The entity type. </param>
+        /// <returns> The configuration source for the temporal history table name setting. </returns>
+        public static ConfigurationSource? GetTemporalHistoryTableSchemaConfigurationSource(this IConventionEntityType entityType)
+            => entityType.FindAnnotation(SqlServerAnnotationNames.TemporalHistoryTableSchema)?.GetConfigurationSource();
     }
 }

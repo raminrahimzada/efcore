@@ -1,8 +1,7 @@
-// Copyright (c) .NET Foundation. All rights reserved.
+﻿// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System.ComponentModel;
-using System.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace Microsoft.EntityFrameworkCore.Metadata.Builders
@@ -13,7 +12,8 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Builders
     ///         and it is not designed to be directly constructed in your application code.
     ///     </para>
     /// </summary>
-    public class TableBuilder
+    public class TemporalPeriodPropertyBuilder<TEntity> : TemporalPeriodPropertyBuilder
+        where TEntity : class
     {
         /// <summary>
         ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -22,27 +22,16 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Builders
         ///     doing so can result in application failures when updating to a new Entity Framework Core release.
         /// </summary>
         [EntityFrameworkInternal]
-        public TableBuilder(string? name, string? schema, IMutableEntityType entityType)
+        public TemporalPeriodPropertyBuilder(IMutableEntityType entityType, IMutableProperty periodProperty, bool periodStart)
+            : base(entityType, periodProperty, periodStart)
         {
-            EntityType = entityType;
         }
 
         /// <summary>
-        ///     The entity type being configured.
+        ///     TODO: add comments
         /// </summary>
-        public virtual IMutableEntityType EntityType { [DebuggerStepThrough] get; }
-
-        /// <summary>
-        ///     Configures the table to be ignored by migrations.
-        /// </summary>
-        /// <param name="excluded"> A value indicating whether the table should be managed by migrations. </param>
-        /// <returns> The same builder instance so that multiple calls can be chained. </returns>
-        public virtual TableBuilder ExcludeFromMigrations(bool excluded = true)
-        {
-            EntityType.SetIsTableExcludedFromMigrations(excluded);
-
-            return this;
-        }
+        public new virtual TemporalPeriodPropertyBuilder<TEntity> HasColumnName(string name)
+            => (TemporalPeriodPropertyBuilder<TEntity>)base.HasColumnName(name);
 
         #region Hidden System.Object members
 

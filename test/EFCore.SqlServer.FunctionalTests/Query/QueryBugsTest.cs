@@ -10213,18 +10213,25 @@ CROSS APPLY OPENJSON([c].[Json], N'$.items') AS [o]" });
             protected override void OnModelCreating(ModelBuilder modelBuilder)
             {
                 // TODO: test negative when start and end are same property - we should throw!
-                modelBuilder.Entity<TemporalBlog>().IsTemporal();// "Start", "End", "BlogHistory");
+                //modelBuilder.Entity<TemporalBlog>().IsTemporal();// "Start", "End", "BlogHistory");
+                modelBuilder.Entity<TemporalBlog>().ToTable(tb => tb.IsTemporal());
                 modelBuilder.Entity<TemporalBlog>().Property(x => x.Id).ValueGeneratedNever();
                 modelBuilder.Entity<TemporalBlog>().Property(x => x.Id).HasColumnName("PeriodStart");
 
+                modelBuilder.Entity<TemporalPost>().ToTable(tb => tb.IsTemporal(ttb =>
+                {
+                    ttb.HasPeriodStart("PeriodStart");
+                    ttb.HasPeriodEnd("PeriodEnd");
+                }));
 
-                modelBuilder.Entity<TemporalPost>().IsTemporal(x => x.PeriodStart, x => x.PeriodEnd);
+                //modelBuilder.Entity<TemporalPost>().IsTemporal(x => x.PeriodStart, x => x.PeriodEnd);
                 modelBuilder.Entity<TemporalPost>().Property(x => x.Id).ValueGeneratedNever();
 
                 modelBuilder.Entity<TemporalBlog>().HasMany(x => x.Posts).WithOne(x => x.Blog).IsRequired();
 
 
-                modelBuilder.Entity<TemporalCustomer>().IsTemporal();
+                //modelBuilder.Entity<TemporalCustomer>().IsTemporal();
+                modelBuilder.Entity<TemporalCustomer>().ToTable("Customers", tb => tb.IsTemporal());
                 modelBuilder.Entity<TemporalVipCustomer>().HasBaseType<TemporalCustomer>();
                 modelBuilder.Entity<TemporalVipCustomer2>().HasBaseType<TemporalCustomer>();
             }
@@ -10253,11 +10260,8 @@ CROSS APPLY OPENJSON([c].[Json], N'$.items') AS [o]" });
             public int Id { get; set; }
             public string Name { get; set; }
 
-            //[DatabaseGenerated(DatabaseGeneratedOption.Computed)]
-            public DateTime PeriodStart { get; set; }
-
-            //[DatabaseGenerated(DatabaseGeneratedOption.Computed)]
-            public DateTime PeriodEnd { get; set; }
+            //public DateTime PeriodStart { get; set; }
+            //public DateTime PeriodEnd { get; set; }
 
             public TemporalBlog Blog { get; set; }
         }
